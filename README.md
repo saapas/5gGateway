@@ -2,6 +2,6 @@ Project for Distributed Systems course
 
 Contributors:
 Samuel Palovaara
-_____
-_____
-_____
+Toni Makkonen
+Atte Kiviniemi
+Eeli Tavaststjerna
