@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  mqtt-broker:
+    image: emqx/emqx:latest
+    container_name: mqtt-broker
+    ports:
+      - "1883:1883"
+      - "18083:18083"
+
+  cloud-api:
+    build: ./cloud
+    container_name: cloud-api
+    ports:
+      - "8000:8000"
+
+  gateway:
+    build: ./gateway
+    container_name: gateway
+    depends_on:
+      - mqtt-broker
+      - cloud-api
+
+  sensor:
+    build: ./devices
+    container_name: sensor
+    depends_on:
+      - mqtt-broker
