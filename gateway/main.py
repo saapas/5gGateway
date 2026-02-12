@@ -1,23 +1,43 @@
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import rest_client
 import mqtt_client
 from data_buffer import DataBuffer
+
+WORKER_THREAD_COUNT = 20  # Fixed number of worker threads
 
 buffer = DataBuffer(
     batch_size=10,
     max_wait_seconds=5
 )
 
-def mqtt_message(message):
-    buffer.add(message)
+worker_pool = ThreadPoolExecutor(
+    max_workers=WORKER_THREAD_COUNT,
+    thread_name_prefix="iot-worker"
+)
 
-def main():
-    # Create thread for mqtt_client
-    mqtt_thread = threading.Thread(target=mqtt_client.start_mqtt, args=(mqtt_message,), daemon=True)
+def process_message(message):
+    try:
+        buffer.add(message)
+    except Exception as e:
+        print(f"Error processing message: {e}")
+
+def mqtt_message_callback(message):
+    worker_pool.submit(process_message, message)
+
+
+def main():   
+    # MQTT client listener
+    mqtt_thread = threading.Thread(
+        target=mqtt_client.start_mqtt,
+        args=(mqtt_message_callback,),
+        daemon=True
+    )
     mqtt_thread.start()
+    print(f"Started MQTT listener with {WORKER_THREAD_COUNT} worker threads")
 
-    # try to get batches from databuffer to add to database via rest_client
+
     while True:
         batch = buffer.get_batch_if_ready()
 
@@ -28,6 +48,6 @@ def main():
                 buffer.requeue(batch)
 
         time.sleep(1)
-
+        
 if __name__ == "__main__":
     main()

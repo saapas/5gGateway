@@ -11,18 +11,46 @@ services:
   cloud-api:
     build: ./cloud
     container_name: cloud-api
+    environment:
+      - PYTHONUNBUFFERED=1
     ports:
       - "8000:8000"
 
   gateway:
     build: ./gateway
     container_name: gateway
+    environment:
+      - PYTHONUNBUFFERED=1
     depends_on:
       - mqtt-broker
       - cloud-api
 
-  sensor:
+  sensor-1:
     build: ./devices
-    container_name: sensor
+    container_name: sensor-1
+    environment:
+      - DEVICE_ID=sensor-001
+      - SENSOR_TYPE=temperature
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - mqtt-broker
+
+  sensor-2:
+    build: ./devices
+    container_name: sensor-2
+    environment:
+      - DEVICE_ID=sensor-002
+      - SENSOR_TYPE=humidity
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - mqtt-broker
+
+  sensor-3:
+    build: ./devices
+    container_name: sensor-3
+    environment:
+      - DEVICE_ID=sensor-003
+      - SENSOR_TYPE=pressure
+      - PYTHONUNBUFFERED=1
     depends_on:
       - mqtt-broker
