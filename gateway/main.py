@@ -1,11 +1,27 @@
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor
 import rest_client
 import mqtt_client
+import os
+import json
+import requests
 from data_buffer import DataBuffer
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 WORKER_THREAD_COUNT = 20  # Fixed number of worker threads
+API_KEY = "secretAPIkey"
+
+CONFIG = {
+    "batch_size": 10,
+    "max_wait_seconds": 5,
+    "gateway_id": os.getenv("GATEWAY_ID", "gateway_01"),
+    "config_version": "0",
+    "config_check_interval": 30
+}
+
+CONFIG_URL = f"http://cloud-api:8000/config/{CONFIG['gateway_id']}"
+HEARTBEAT_URL = "http://cloud-api:8000/heartbeat"
 
 buffer = DataBuffer(
     batch_size=10,
@@ -37,7 +53,45 @@ def batch_sender_loop():
         
         time.sleep(1)  # check every second
 
+def get_config():
+    """
+    Fetches gateway configs from cloud-api and updates local CONFIG and data buffer
+    """
+    global buffer, CONFIG
+    try:
+        response = request.get(CONFIG_URL, headers={"Authorization": f"Bearer{API_KEY}"})
+        new_config = response.json()["config"]
+        if response.status_code == 200:
+            new_config = response.json()["config"]
+            CONFIG.update(new_config)
+            buffer = DataBuffer(CONFIG["batch_size"], CONFIG["max_wait_seconds"])
+    except Exception as e:
+        print(f"Configuration fetch failed: {e}")
+
+def heartbeat():
+    """
+    Sends heartbeat-message to cloud-api
+    -> cloud sees, which gateways are alive and their IDs
+    """
+    try:
+        payload = {
+            "gatewayId": CONFIG["gateway_id"],
+            "status": "alive",
+            "timestamp": datetime.now().isoformat() + "Z"
+        }
+        requests.post(
+            HEARTBEAT_URL, 
+            json=payload,
+            headers={"Authorization": f"Bearer {API_KEY}"}
+        )
+
+    except Exception as e:
+        print(f"Heartbeat failed: {e}")
+
 def main():   
+
+    get_config()
+
     # MQTT client listener
     mqtt_thread = threading.Thread(
         target=mqtt_client.start_mqtt,
@@ -46,6 +100,7 @@ def main():
     mqtt_thread.start()
     print(f"Started MQTT listener with {WORKER_THREAD_COUNT} worker threads")
 
+    last_check = time.time()
     rest_thread = threading.Thread(
         target=batch_sender_loop,
     )
@@ -53,6 +108,12 @@ def main():
 
     mqtt_thread.join()
     rest_thread.join()
+
+    while True:
+        if time.time() - last_check > CONFIG["config_check_interval"]:
+            get_config()
+            heartbeat()
+            last_check = time.time()
         
 if __name__ == "__main__":
     main()

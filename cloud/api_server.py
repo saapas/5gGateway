@@ -1,11 +1,12 @@
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from datetime import datetime
 
 API_KEY = "secretAPIkey"
-
+gateway_configs = {"gateway_01": {"batch_size": 10, "max_wait_seconds": 5} }
 app = FastAPI(title="IoT Cloud API")
+
 
 class SensorData(BaseModel):
     deviceId: str
@@ -68,3 +69,30 @@ def get_data_by_device(device_id: str):
         "count": len(filtered),
         "data": filtered
     }
+
+@app.get("/config/{gateway_id}")
+def get_config(gateway_id: str, authorization: str = Header(None)):
+    if authorization != f"Bearer {API_KEY}":
+        raise HTTPException(401, "Unauthorized")
+    return {"config": gateway_configs.get(gateway_id, {})}
+
+@app.post("/config/{gateway_id}")
+def update_config(gateway_id: str, config_data: Dict[str, Any], authorization: str = Header(None)):
+    if authorization != f"Bearer {API_KEY}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    # Old values stay same
+    if gateway_id not in gateway_configs:
+        gateway_configs[gateway_id] = {}
+    
+    gateway_configs[gateway_id].update(config_data) 
+    
+    print(f"OTA Config updated for {gateway_id}: {gateway_configs[gateway_id]}")
+    return {"status": "updated", "config": gateway_configs[gateway_id]}
+
+@app.post("/heartbeat")
+def heartbeat(payload: dict, authorization: str = Header(None)):
+    if authorization != f"Bearer {API_KEY}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    print(f"Heartbeat from {payload.get('gatewayId')}")
+    return {"ok": True}
