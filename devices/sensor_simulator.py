@@ -10,6 +10,7 @@ PORT = 1883
 DEVICE_ID = os.getenv("DEVICE_ID", "sensor-001")
 SENSOR_TYPE = os.getenv("SENSOR_TYPE", "temperature")  # temperature, humidity, pressure
 PUBLISH_INTERVAL = 1  # seconds
+SIGNATURE = "device-secret"
 
 SENSOR_CONFIG = {
     "temperature": {
@@ -68,6 +69,7 @@ def main():
         while True:
             payload = {
                 "deviceId": DEVICE_ID,
+                "signature": SIGNATURE,
                 "sensorType": SENSOR_TYPE,
                 "timestamp": datetime.now().isoformat() + "Z",
                 "value": get_sensor_reading(),

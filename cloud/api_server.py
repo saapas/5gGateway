@@ -2,11 +2,14 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 from datetime import datetime
+from provisioning import register_device
+from auth import gateway_auth_middleware
+from logger import log_event
 
 API_KEY = "secretAPIkey"
 gateway_configs = {"gateway_01": {"batch_size": 10, "max_wait_seconds": 5} }
 app = FastAPI(title="IoT Cloud API")
-
+app.middleware("http")(gateway_auth_middleware)
 
 class SensorData(BaseModel):
     deviceId: str
@@ -36,13 +39,22 @@ def ingest_data(
     for entry in payload.data:
         database.append(entry.model_dump())
 
-    print(f"Received {len(payload.data)} records from {payload.gatewayId}")
+    log_event(f"Received {len(payload.data)} records from {payload.gatewayId}")
     print(f"  Sample: {payload.data[0].sensorType}")
     print(f"Total stored records: {len(database)}")
 
     return {
         "status": "ok",
         "received": len(payload.data)
+    }
+
+@app.post("/devices/register")
+def create_device(gateway_id: str):
+    device_id, device_secret = register_device(gateway_id)
+    log_event(f"Device registered: {device_id}")
+    return {
+        "device_id": device_id,
+        "device_secret": device_secret
     }
 
 @app.get("/data")
