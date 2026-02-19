@@ -13,6 +13,9 @@ from logger import log_event
 
 # Example of how to add a device
 add_device("sensor-001", "device-secret")
+add_device("sensor-002", "device-secret")
+# not adding sensor 3 to demonstrate
+
 WORKER_THREAD_COUNT = 20  # Fixed number of worker threads
 API_KEY = "secretAPIkey"
 
@@ -40,8 +43,7 @@ worker_pool = ThreadPoolExecutor(
 def process_message(message):
     try:
         deviceid = message.get("deviceId")
-        payload = message.get("payload")
-        signature = message.get("signature")
+        signature = message.pop("signature", None)
 
         if not validate_device(deviceid, signature):
             log_event(f"Unauthorized device attempt: {deviceid}")
@@ -49,7 +51,7 @@ def process_message(message):
 
         log_event(f"Device authenticated: {deviceid}")
 
-        buffer.add(payload)
+        buffer.add(message)
 
     except Exception as e:
         log_event(f"Error processing message: {e}")

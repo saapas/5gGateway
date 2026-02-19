@@ -79,7 +79,7 @@ def main():
             result = client.publish(topic, json.dumps(payload))
             status = result[0]
             if status == 0:
-                print(f"[{DEVICE_ID}] Sent {SENSOR_TYPE}={payload['value']}{config['unit']} to {topic} fgdsf ds fs fsdf")
+                print(f"[{DEVICE_ID}] Sent {SENSOR_TYPE}={payload['value']}{config['unit']} to {topic}")
             else:
                 print(f"[{DEVICE_ID}] Failed to send message to topic {topic}")
 

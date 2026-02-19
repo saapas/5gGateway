@@ -4,6 +4,7 @@ import time
 CLOUD_API_URL = "http://cloud-api:8000/ingest"
 API_KEY = "secretAPIkey"
 GATEWAY_ID = "gateway-01"
+SECRET = "gateway-secret"
 
 TIMEOUT_SECONDS = 5
 MAX_RETRIES = 3
@@ -14,7 +15,9 @@ RETRY_DELAY = 2  # seconds
 def send_to_cloud(batch):
     headers = {
         "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "gatewayId": GATEWAY_ID,
+        "secret" : SECRET
     }
 
     payload = {

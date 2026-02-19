@@ -2,7 +2,7 @@ import uuid
 
 devices = {}
 gateways = {
-    "gateway-1": "gateway-secret"
+    "gateway-01": "gateway-secret"
 }
 
 def register_device(gateway_id: str):
@@ -17,5 +17,7 @@ def register_device(gateway_id: str):
 
     return device_id, device_secret
 
-def validate_gateway(gateway_id: str, secret: str):
-    return gateways.get(gateway_id) == secret
+def validate_gateway(gateway_id, gateway_secret):
+    if not gateway_id or not gateway_secret:
+        return False
+    return gateways.get(gateway_id) == gateway_secret

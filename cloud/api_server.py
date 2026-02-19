@@ -1,15 +1,13 @@
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 from datetime import datetime
-from provisioning import register_device
-from auth import gateway_auth_middleware
+from provisioning import register_device, validate_gateway
 from logger import log_event
 
 API_KEY = "secretAPIkey"
-gateway_configs = {"gateway_01": {"batch_size": 10, "max_wait_seconds": 5} }
+gateway_configs = {"gateway-01": {"batch_size": 10, "max_wait_seconds": 5} }
 app = FastAPI(title="IoT Cloud API")
-app.middleware("http")(gateway_auth_middleware)
 
 class SensorData(BaseModel):
     deviceId: str
@@ -26,6 +24,19 @@ class IngestPayload(BaseModel):
 # database just list for now
 database = []
 
+@app.middleware("http")
+async def gateway_auth_middleware(request: Request, call_next):
+    if request.url.path == "/devices/register":
+        return await call_next(request)
+
+    gateway_id = request.headers.get("gatewayid")
+    gateway_secret = request.headers.get("secret")
+
+    if not validate_gateway(gateway_id, gateway_secret):
+        raise HTTPException(status_code=401, detail="Invalid Gateway")
+
+    return await call_next(request)
+
 @app.post("/ingest")
 def ingest_data(
     payload: IngestPayload,
@@ -40,8 +51,8 @@ def ingest_data(
         database.append(entry.model_dump())
 
     log_event(f"Received {len(payload.data)} records from {payload.gatewayId}")
-    print(f"  Sample: {payload.data[0].sensorType}")
-    print(f"Total stored records: {len(database)}")
+    log_event(f"  Sample: {payload.data[0].sensorType}")
+    log_event(f"Total stored records: {len(database)}")
 
     return {
         "status": "ok",
@@ -99,12 +110,12 @@ def update_config(gateway_id: str, config_data: Dict[str, Any], authorization: s
     
     gateway_configs[gateway_id].update(config_data) 
     
-    print(f"OTA Config updated for {gateway_id}: {gateway_configs[gateway_id]}")
+    log_event(f"OTA Config updated for {gateway_id}: {gateway_configs[gateway_id]}")
     return {"status": "updated", "config": gateway_configs[gateway_id]}
 
 @app.post("/heartbeat")
 def heartbeat(payload: dict, authorization: str = Header(None)):
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
-    print(f"Heartbeat from {payload.get('gatewayId')}")
+    log_event(f"Heartbeat from {payload.get('gatewayId')}")
     return {"ok": True}
