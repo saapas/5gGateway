@@ -3,7 +3,6 @@ import threading
 import rest_client
 import mqtt_client
 import os
-import json
 import requests
 from data_buffer import DataBuffer
 from datetime import datetime
