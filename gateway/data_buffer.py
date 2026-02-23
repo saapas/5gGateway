@@ -25,8 +25,10 @@ class DataBuffer:
                 len(self.buffer) >= self.batch_size
                 or (self.buffer and now - self.last_flush_time >= self.max_wait_seconds)
             ):
-                batch = self.buffer.copy()
-                self.buffer.clear()
+                # Return exactly batch_size items (or all if fewer remain)
+                count = min(len(self.buffer), self.batch_size)
+                batch = self.buffer[:count]
+                self.buffer = self.buffer[count:]
                 self.last_flush_time = now
                 return batch
 
@@ -35,3 +37,9 @@ class DataBuffer:
     def requeue(self, batch):
         with self.lock:
             self.buffer = batch + self.buffer
+
+    def flush_all(self):
+        with self.lock:
+            data = self.buffer.copy()
+            self.buffer.clear()
+            return data

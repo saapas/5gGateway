@@ -1,14 +1,19 @@
 import json
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 from datetime import datetime
-from provisioning import register_device, validate_gateway
+from provisioning import register_device, validate_gateway, register_gateway
 from logger import log_info, log_error
 
 API_KEY = "secretAPIkey"
 PROTECTED_PATHS = ["/ingest"]
-gateway_configs = {"gateway-01": {"batch_size": 10, "max_wait_seconds": 5} }
+gateway_configs = {"gateway-01": {"batch_size": 50, "max_wait_seconds": 5} }
+
+# Track gateway loads: gateway_id -> {status, message_rate, last_heartbeat}
+gateway_loads = {}
+
 app = FastAPI(title="IoT Cloud API")
 
 class SensorData(BaseModel):
@@ -31,10 +36,15 @@ async def gateway_auth_middleware(request: Request, call_next):
     if any(request.url.path.startswith(p) for p in PROTECTED_PATHS):
         gateway_id = request.headers.get("gatewayid")
         gateway_secret = request.headers.get("secret")
-        log_info(f"{gateway_id} tried to access protected path")
 
         if not validate_gateway(gateway_id, gateway_secret):
-            raise HTTPException(status_code=401, detail="Invalid Gateway")
+            # Auto-register new gateways that present the correct secret
+            if gateway_id and gateway_secret == "gateway-secret":
+                register_gateway(gateway_id, gateway_secret)
+                log_info(f"Auto-registered new gateway: {gateway_id}")
+            else:
+                log_error(f"Unauthorized access attempt to {request.url.path} by {gateway_id}")
+                return JSONResponse(status_code=401, content={"detail": "Invalid Gateway"})
 
     return await call_next(request)
 
@@ -130,5 +140,54 @@ def update_config(gateway_id: str, config_data: Dict[str, Any], authorization: s
 def heartbeat(payload: dict, authorization: str = Header(None)):
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
-    log_info(f"Heartbeat from {payload.get('gatewayId')}")
+    
+    gw_id = payload.get("gatewayId")
+    msg_rate = payload.get("message_rate", 0)
+    records_sent = payload.get("records_sent", 0)
+    
+    # Update gateway load tracking
+    gateway_loads[gw_id] = {
+        "status": "alive",
+        "message_rate": msg_rate,
+        "records_sent": records_sent,
+        "last_heartbeat": datetime.now().isoformat()
+    }
+    
+    # Auto-register gateway config if new
+    if gw_id not in gateway_configs:
+        gateway_configs[gw_id] = {"batch_size": 50, "max_wait_seconds": 5}
+        register_gateway(gw_id)
+    
+    log_info(f"Heartbeat from {gw_id} (msg_rate={msg_rate}, records_sent={records_sent})")
     return {"ok": True}
+
+@app.delete("/gateway/{gateway_id}")
+def remove_gateway(gateway_id: str, authorization: str = Header(None)):
+    """Remove a stopped gateway from tracking"""
+    if authorization != f"Bearer {API_KEY}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    removed = gateway_loads.pop(gateway_id, None)
+    if removed:
+        log_info(f"Gateway {gateway_id} deregistered from tracking")
+        return {"status": "removed", "gateway_id": gateway_id}
+    return {"status": "not_found", "gateway_id": gateway_id}
+
+
+@app.get("/gateway-status")
+def get_gateway_status():
+    """Returns load info for all gateways - used by autoscaler"""
+    total_records = sum(info.get("records_sent", 0) for info in gateway_loads.values())
+    return {
+        "gateways": {
+            gw_id: {
+                "message_rate": info.get("message_rate", 0),
+                "records_sent": info.get("records_sent", 0),
+                "status": info.get("status", "unknown"),
+                "last_heartbeat": info.get("last_heartbeat", "")
+            }
+            for gw_id, info in gateway_loads.items()
+        },
+        "total_records_sent": total_records,
+        "count": len(gateway_loads)
+    }

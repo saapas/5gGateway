@@ -21,3 +21,7 @@ def validate_gateway(gateway_id, gateway_secret):
     if not gateway_id or not gateway_secret:
         return False
     return gateways.get(gateway_id) == gateway_secret
+
+def register_gateway(gateway_id: str, secret: str = "gateway-secret"):
+    """Auto-register a new gateway"""
+    gateways[gateway_id] = secret

@@ -25,11 +25,12 @@ services:
     depends_on:
       - cloud-api
 
-  gateway:
+  gateway-01:
     build: ./gateway
-    container_name: gateway
+    container_name: gateway-01
     environment:
       - PYTHONUNBUFFERED=1
+      - GATEWAY_ID=gateway-01
     depends_on:
       - mqtt-broker
       - cloud-api
