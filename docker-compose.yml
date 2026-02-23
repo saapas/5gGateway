@@ -10,11 +10,20 @@ services:
 
   cloud-api:
     build: ./cloud
+    volumes:
+      - ./data:/data
     container_name: cloud-api
     environment:
       - PYTHONUNBUFFERED=1
     ports:
       - "8000:8000"
+
+  spark:
+    build: ./spark
+    volumes:
+      - ./data:/data
+    depends_on:
+      - cloud-api
 
   gateway:
     build: ./gateway

@@ -1,5 +1,6 @@
 import requests
 import time
+from logger import log_info, log_error
 
 CLOUD_API_URL = "http://cloud-api:8000/ingest"
 API_KEY = "secretAPIkey"
@@ -35,20 +36,20 @@ def send_to_cloud(batch):
             )
 
             if response.status_code == 200:
-                print(f"Sent {len(batch)} records to cloud")
+                log_info(f"Sent {len(batch)} records to cloud")
                 return True
             else:
-                print(
+                log_error(
                     f"Cloud error {response.status_code}: "
                     f"{response.text}"
                 )
 
         except requests.exceptions.RequestException as e:
-            print(f"Network error: {e}")
+            log_error(f"Network error: {e}")
 
         if attempt < MAX_RETRIES:
-            print(f"Retry {attempt}/{MAX_RETRIES} in {RETRY_DELAY}s")
+            log_info(f"Retry {attempt}/{MAX_RETRIES} in {RETRY_DELAY}s")
             time.sleep(RETRY_DELAY)
 
-    print("Failed to send batch after retries")
+    log_error("Failed to send batch after retries")
     return False

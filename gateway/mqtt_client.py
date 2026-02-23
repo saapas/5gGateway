@@ -1,6 +1,7 @@
 import json
 import time
 import paho.mqtt.client as mqtt
+from logger import log_info, log_error
 
 BROKER = "mqtt-broker"
 PORT = 1883
@@ -17,12 +18,12 @@ def start_mqtt(on_message_callback, client_id="gateway-01"):
 
     def on_connect(client, userdata, flags, rc):
         if rc == 0:
-            print("MQTT client connected to MQTT broker")
+            log_info("MQTT client connected to MQTT broker")
             
             for topic in TOPICS:
                 client.subscribe(topic)
         else:
-            print(f"MQTT client connection failed: {rc}")
+            log_error(f"MQTT client connection failed: {rc}")
 
     def on_message(client, userdata, msg):
         try:
@@ -30,7 +31,7 @@ def start_mqtt(on_message_callback, client_id="gateway-01"):
             data["topic"] = msg.topic
             on_message_callback(data)
         except json.JSONDecodeError:
-            print(f"Invalid JSON received on {msg.topic}, dropping message")
+            log_error(f"Invalid JSON received on {msg.topic}, dropping message")
 
     client.on_connect = on_connect
     client.on_message = on_message
@@ -41,7 +42,7 @@ def start_mqtt(on_message_callback, client_id="gateway-01"):
             client.connect(BROKER, PORT)
             break
         except Exception as e:
-            print(f"Broker not ready, retrying in 2s... ({e})")
+            log_info(f"Broker not ready, retrying in 2s... ({e})")
             time.sleep(2)
 
     client.loop_start()

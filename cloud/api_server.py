@@ -1,11 +1,13 @@
+import json
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 from datetime import datetime
 from provisioning import register_device, validate_gateway
-from logger import log_event
+from logger import log_info, log_error
 
 API_KEY = "secretAPIkey"
+PROTECTED_PATHS = ["/ingest"]
 gateway_configs = {"gateway-01": {"batch_size": 10, "max_wait_seconds": 5} }
 app = FastAPI(title="IoT Cloud API")
 
@@ -26,14 +28,13 @@ database = []
 
 @app.middleware("http")
 async def gateway_auth_middleware(request: Request, call_next):
-    if request.url.path == "/devices/register":
-        return await call_next(request)
+    if any(request.url.path.startswith(p) for p in PROTECTED_PATHS):
+        gateway_id = request.headers.get("gatewayid")
+        gateway_secret = request.headers.get("secret")
+        log_info(f"{gateway_id} tried to access protected path")
 
-    gateway_id = request.headers.get("gatewayid")
-    gateway_secret = request.headers.get("secret")
-
-    if not validate_gateway(gateway_id, gateway_secret):
-        raise HTTPException(status_code=401, detail="Invalid Gateway")
+        if not validate_gateway(gateway_id, gateway_secret):
+            raise HTTPException(status_code=401, detail="Invalid Gateway")
 
     return await call_next(request)
 
@@ -50,9 +51,9 @@ def ingest_data(
     for entry in payload.data:
         database.append(entry.model_dump())
 
-    log_event(f"Received {len(payload.data)} records from {payload.gatewayId}")
-    log_event(f"  Sample: {payload.data[0].sensorType}")
-    log_event(f"Total stored records: {len(database)}")
+    log_info(f"Received {len(payload.data)} records from {payload.gatewayId}")
+    log_info(f"  Sample: {payload.data[0].sensorType}")
+    log_info(f"Total stored records: {len(database)}")
 
     return {
         "status": "ok",
@@ -62,7 +63,7 @@ def ingest_data(
 @app.post("/devices/register")
 def create_device(gateway_id: str):
     device_id, device_secret = register_device(gateway_id)
-    log_event(f"Device registered: {device_id}")
+    log_info(f"Device registered: {device_id}")
     return {
         "device_id": device_id,
         "device_secret": device_secret
@@ -74,6 +75,18 @@ def get_all_data():
         "count": len(database),
         "data": database
     }
+
+@app.get("/export")
+def export_data():
+    def json_serializer(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        raise TypeError(f"Type {type(obj)} not serializable")
+
+    with open("/data/historical_data.json", "w") as f:
+        json.dump(database, f, default=json_serializer)
+
+    return {"status": "exported"}
 
 @app.get("/data/by-type/{sensor_type}")
 def get_data_by_type(sensor_type: str):
@@ -110,12 +123,12 @@ def update_config(gateway_id: str, config_data: Dict[str, Any], authorization: s
     
     gateway_configs[gateway_id].update(config_data) 
     
-    log_event(f"OTA Config updated for {gateway_id}: {gateway_configs[gateway_id]}")
+    log_info(f"OTA Config updated for {gateway_id}: {gateway_configs[gateway_id]}")
     return {"status": "updated", "config": gateway_configs[gateway_id]}
 
 @app.post("/heartbeat")
 def heartbeat(payload: dict, authorization: str = Header(None)):
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
-    log_event(f"Heartbeat from {payload.get('gatewayId')}")
+    log_info(f"Heartbeat from {payload.get('gatewayId')}")
     return {"ok": True}

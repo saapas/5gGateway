@@ -8,7 +8,7 @@ from data_buffer import DataBuffer
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from auth import validate_device, add_device
-from logger import log_event
+from logger import log_info, log_error
 
 # Example of how to add a device
 add_device("sensor-001", "device-secret")
@@ -45,15 +45,15 @@ def process_message(message):
         signature = message.pop("signature", None)
 
         if not validate_device(deviceid, signature):
-            log_event(f"Unauthorized device attempt: {deviceid}")
+            log_info(f"Unauthorized device attempt: {deviceid}")
             return
 
-        log_event(f"Device authenticated: {deviceid}")
+        log_info(f"Device authenticated: {deviceid}")
 
         buffer.add(message)
 
     except Exception as e:
-        log_event(f"Error processing message: {e}")
+        log_error(f"Error processing message: {e}")
 
 def mqtt_message_callback(message):
     worker_pool.submit(process_message, message)
@@ -65,7 +65,7 @@ def batch_sender_loop():
             if batch:
                 worker_pool.submit(rest_client.send_to_cloud, batch)
         except Exception as e:
-            log_event(f"Error sending batch: {e}")
+            log_error(f"Error sending batch: {e}")
         
         time.sleep(1)  # check every second
 
@@ -82,7 +82,7 @@ def get_config():
             CONFIG.update(new_config)
             buffer = DataBuffer(CONFIG["batch_size"], CONFIG["max_wait_seconds"])
     except Exception as e:
-        log_event(f"Configuration fetch failed: {e}")
+        log_error(f"Configuration fetch failed: {e}")
 
 def heartbeat():
     """
@@ -102,7 +102,7 @@ def heartbeat():
         )
 
     except Exception as e:
-        log_event(f"Heartbeat failed: {e}")
+        log_error(f"Heartbeat failed: {e}")
 
 def main():   
 
@@ -114,7 +114,7 @@ def main():
         args=(mqtt_message_callback,),
     )
     mqtt_thread.start()
-    log_event(f"Started MQTT listener with {WORKER_THREAD_COUNT} worker threads")
+    log_info(f"Started MQTT listener with {WORKER_THREAD_COUNT} worker threads")
 
     last_check = time.time()
     rest_thread = threading.Thread(
