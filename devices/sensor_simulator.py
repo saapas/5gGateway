@@ -11,22 +11,30 @@ DEVICE_ID = os.getenv("DEVICE_ID", "sensor-001")
 SENSOR_TYPE = os.getenv("SENSOR_TYPE", "temperature")  # temperature, humidity, pressure
 PUBLISH_INTERVAL = 1  # seconds
 SIGNATURE = "device-secret"
+START_TIME = time.time()
+BASELINE_SHIFT_AFTER = 60  # seconds
 
 SENSOR_CONFIG = {
     "temperature": {
         "topic": "sensors/temperature",
         "unit": "°C",
-        "generate": lambda: round(random.uniform(20.0, 25.0), 2)
+        "baseline_range": (20.0, 25.0),
+        "shifted_range": (-5.0, 0.0),
+        "anomaly_range": (-50.0, 60.0)
     },
     "humidity": {
         "topic": "sensors/humidity",
         "unit": "%",
-        "generate": lambda: round(random.uniform(30.0, 70.0), 1)
+        "baseline_range": (30.0, 70.0),
+        "shifted_range": (30.0, 70.0),
+        "anomaly_range": (-100.0, 150.0)
     },
     "pressure": {
         "topic": "sensors/pressure",
         "unit": "hPa",
-        "generate": lambda: round(random.uniform(1000.0, 1020.0), 1)
+        "baseline_range": (1000.0, 1020.0),
+        "shifted_range": (1000.0, 1020.0),
+        "anomaly_range": (900.0, 1100.0)
     }
 }
 
@@ -38,7 +46,18 @@ def on_connect(client, userdata, flags, rc):
 
 def get_sensor_reading():
     config = SENSOR_CONFIG.get(SENSOR_TYPE, SENSOR_CONFIG["temperature"])
-    return config["generate"]()
+    elapsed = time.time() - START_TIME
+    
+    # 5% chance of anomaly (out-of-range value)
+    if random.random() < 0.05:
+        return round(random.uniform(*config["anomaly_range"]), 2)
+    
+    # After 60 seconds, shift baseline for sensor-001 only
+    if DEVICE_ID == "sensor-001" and elapsed > BASELINE_SHIFT_AFTER:
+        return round(random.uniform(*config["shifted_range"]), 2)
+    
+    # Normal baseline
+    return round(random.uniform(*config["baseline_range"]), 2)
 
 def main():
     # Validate sensor type

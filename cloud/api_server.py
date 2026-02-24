@@ -1,4 +1,7 @@
 import json
+import os
+import time
+from collections import defaultdict, deque
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -15,6 +18,10 @@ gateway_configs = {"gateway-01": {"batch_size": 50, "max_wait_seconds": 5} }
 gateway_loads = {}
 
 app = FastAPI(title="IoT Cloud API")
+MODEL_PATH = "/data/anomaly_model.json"
+HISTORICAL_PATH = "/data/historical_data.json"
+TRAINING_WINDOW_SIZE = 50
+AUTO_EXPORT_INTERVAL_SECONDS = 20
 
 class SensorData(BaseModel):
     deviceId: str
@@ -30,6 +37,23 @@ class IngestPayload(BaseModel):
 
 # database just list for now
 database = []
+profile_buffers = defaultdict(lambda: deque(maxlen=TRAINING_WINDOW_SIZE))
+last_export_timestamp = 0
+
+
+def make_profile_key(record):
+    """Build unique profile key for per-sensor-type model training."""
+    device_id = record.get("deviceId", "unknown-device")
+    sensor_type = record.get("sensorType", "unknown-sensor")
+    return f"{device_id}::{sensor_type}"
+
+
+def snapshot_training_records():
+    """Flatten bounded per-profile buffers into training dataset for Spark."""
+    records = []
+    for buffer in profile_buffers.values():
+        records.extend(buffer)
+    return sorted(records, key=lambda x: x.get("timestamp", ""))
 
 @app.middleware("http")
 async def gateway_auth_middleware(request: Request, call_next):
@@ -53,17 +77,27 @@ def ingest_data(
     payload: IngestPayload,
     authorization: str = Header(None)
 ):
+    global last_export_timestamp
+
     # check for valid API key
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     # Add entries to database
     for entry in payload.data:
-        database.append(entry.model_dump())
+        row = entry.model_dump()
+        row["profileKey"] = make_profile_key(row)
+        database.append(row)
+        profile_buffers[row["profileKey"]].append(row)
 
     log_info(f"Received {len(payload.data)} records from {payload.gatewayId}")
     log_info(f"  Sample: {payload.data[0].sensorType}")
     log_info(f"Total stored records: {len(database)}")
+
+    now = time.time()
+    if now - last_export_timestamp >= AUTO_EXPORT_INTERVAL_SECONDS:
+        export_data()
+        last_export_timestamp = now
 
     return {
         "status": "ok",
@@ -93,8 +127,9 @@ def export_data():
             return obj.isoformat()
         raise TypeError(f"Type {type(obj)} not serializable")
 
-    with open("/data/historical_data.json", "w") as f:
-        json.dump(database, f, default=json_serializer)
+    training_records = snapshot_training_records()
+    with open(HISTORICAL_PATH, "w") as f:
+        json.dump(training_records, f, default=json_serializer)
 
     return {"status": "exported"}
 
@@ -160,6 +195,27 @@ def heartbeat(payload: dict, authorization: str = Header(None)):
     
     log_info(f"Heartbeat from {gw_id} (msg_rate={msg_rate}, records_sent={records_sent})")
     return {"ok": True}
+
+
+@app.get("/ml/model")
+def get_ml_model(authorization: str = Header(None)):
+    if authorization != f"Bearer {API_KEY}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if not os.path.exists(MODEL_PATH):
+        return {
+            "status": "pending",
+            "model": None,
+            "message": "Model not available yet"
+        }
+
+    with open(MODEL_PATH, "r", encoding="utf-8") as f:
+        model_artifact = json.load(f)
+
+    return {
+        "status": "ok",
+        "model": model_artifact
+    }
 
 @app.delete("/gateway/{gateway_id}")
 def remove_gateway(gateway_id: str, authorization: str = Header(None)):

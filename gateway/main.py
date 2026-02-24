@@ -11,6 +11,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from auth import validate_device, add_device
 from logger import log_info, log_error
+from anomaly_detector import AnomalyDetector
 
 # Example of how to add a device
 add_device("sensor-001", "device-secret")
@@ -31,10 +32,13 @@ CONFIG = {
 
 CONFIG_URL = f"http://cloud-api:8000/config/{GATEWAY_ID}"
 HEARTBEAT_URL = "http://cloud-api:8000/heartbeat"
+MODEL_URL = "http://cloud-api:8000/ml/model"
+MODEL_REFRESH_INTERVAL_SECONDS = 20
 
 buffer = DataBuffer(batch_size=50, max_wait_seconds=5)
 message_counter = {"count": 0, "lock": threading.Lock()}
 shutdown_event = threading.Event()
+detector = AnomalyDetector()
 
 worker_pool = ThreadPoolExecutor(
     max_workers=WORKER_THREAD_COUNT,
@@ -51,6 +55,40 @@ def get_and_reset_message_count():
         message_counter["count"] = 0
         return count
 
+
+def make_profile_key(message):
+    """Build unique profile key for per-sensor-type model lookup."""
+    device_id = message.get("deviceId", "unknown-device")
+    sensor_type = message.get("sensorType", "unknown-sensor")
+    return f"{device_id}::{sensor_type}"
+
+
+def refresh_model_once():
+    """Fetch latest cloud-trained model and update edge detector."""
+    try:
+        response = requests.get(MODEL_URL, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=5)
+        if response.status_code != 200:
+            log_error(f"[{GATEWAY_ID}] Model error")
+            return
+
+        payload = response.json()
+        if payload.get("status") == "pending":
+            log_info(f"[{GATEWAY_ID}] Model not ready")
+            return
+
+        detector.update_model(payload.get("model", payload))
+        features = payload.get("model", payload).get("features", {})
+        log_info(f"[{GATEWAY_ID}] Model updated with {len(features)} profiles")
+    except Exception as e:
+        log_error(f"[{GATEWAY_ID}] Model refresh failed")
+
+
+def model_refresh_loop():
+    """Background thread: poll cloud for model updates every 20s."""
+    while not shutdown_event.is_set():
+        refresh_model_once()
+        time.sleep(MODEL_REFRESH_INTERVAL_SECONDS)
+
 def process_message(message):
     try:
         deviceid = message.get("deviceId")
@@ -66,6 +104,23 @@ def process_message(message):
                 return
 
         increment_message_count()
+
+        if "value" in message:
+            profile_key = make_profile_key(message)
+            ml_result = detector.score(profile_key, message["value"])
+            message["profileKey"] = profile_key
+            message["isAnomaly"] = ml_result["isAnomaly"]
+            message["anomalyScore"] = ml_result["anomalyScore"]
+            if ml_result.get("hasProfile"):
+                message["modelTimestamp"] = ml_result.get("modelTimestamp")
+                if ml_result["isAnomaly"]:
+                    log_info(
+                        f"[{GATEWAY_ID}] !!!ANOMALY DETECTED!!! {profile_key} "
+                        f"value={message['value']} score={ml_result['anomalyScore']:.2f}"
+                    )
+            else:
+                log_info(f"[{GATEWAY_ID}] No profile for {profile_key} yet")
+
         buffer.add(message)
 
     except Exception as e:
@@ -160,6 +215,9 @@ def main():
     )
     mqtt_thread.start()
     log_info(f"[{GATEWAY_ID}] MQTT listener started with {WORKER_THREAD_COUNT} workers")
+
+    model_thread = threading.Thread(target=model_refresh_loop, daemon=True)
+    model_thread.start()
 
     # Batch sender
     rest_thread = threading.Thread(target=batch_sender_loop, daemon=True)
