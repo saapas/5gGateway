@@ -1,42 +1,18 @@
 import time
 import json
-import random
 import os
 from datetime import datetime
 import paho.mqtt.client as mqtt
 
+from sensor import Sensor, SENSOR_CONFIG
+
 BROKER = "mqtt-broker"
 PORT = 1883
 DEVICE_ID = os.getenv("DEVICE_ID", "sensor-001")
-SENSOR_TYPE = os.getenv("SENSOR_TYPE", "temperature")  # temperature, humidity, pressure
-PUBLISH_INTERVAL = 1  # seconds
+SENSOR_TYPE = os.getenv("SENSOR_TYPE", "temperature")
+PUBLISH_INTERVAL = 1
 SIGNATURE = "device-secret"
-START_TIME = time.time()
-BASELINE_SHIFT_AFTER = 60  # seconds
 
-SENSOR_CONFIG = {
-    "temperature": {
-        "topic": "sensors/temperature",
-        "unit": "°C",
-        "baseline_range": (20.0, 25.0),
-        "shifted_range": (-5.0, 0.0),
-        "anomaly_range": (-50.0, 60.0)
-    },
-    "humidity": {
-        "topic": "sensors/humidity",
-        "unit": "%",
-        "baseline_range": (30.0, 70.0),
-        "shifted_range": (30.0, 70.0),
-        "anomaly_range": (-100.0, 150.0)
-    },
-    "pressure": {
-        "topic": "sensors/pressure",
-        "unit": "hPa",
-        "baseline_range": (1000.0, 1020.0),
-        "shifted_range": (1000.0, 1020.0),
-        "anomaly_range": (900.0, 1100.0)
-    }
-}
 
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
@@ -44,33 +20,22 @@ def on_connect(client, userdata, flags, rc):
     else:
         print(f"[{DEVICE_ID}] Failed to connect, return code {rc}")
 
-def get_sensor_reading():
-    config = SENSOR_CONFIG.get(SENSOR_TYPE, SENSOR_CONFIG["temperature"])
-    elapsed = time.time() - START_TIME
-    
-    # 5% chance of anomaly (out-of-range value)
-    if random.random() < 0.05:
-        return round(random.uniform(*config["anomaly_range"]), 2)
-    
-    # After 60 seconds, shift baseline for sensor-001 only
-    if DEVICE_ID == "sensor-001" and elapsed > BASELINE_SHIFT_AFTER:
-        return round(random.uniform(*config["shifted_range"]), 2)
-    
-    # Normal baseline
-    return round(random.uniform(*config["baseline_range"]), 2)
 
 def main():
     # Validate sensor type
     if SENSOR_TYPE not in SENSOR_CONFIG:
+        print(f"Invalid sensor type: {SENSOR_TYPE}")
         return
 
-    config = SENSOR_CONFIG[SENSOR_TYPE]
-    topic = config["topic"]
-    
+    sensor = Sensor(DEVICE_ID, SENSOR_TYPE)
+
+    topic = SENSOR_CONFIG[SENSOR_TYPE]["topic"]
+    unit = SENSOR_CONFIG[SENSOR_TYPE]["unit"]
+
     client = mqtt.Client(client_id=DEVICE_ID, protocol=mqtt.MQTTv311)
     client.on_connect = on_connect
 
-    # Try to connect to broker if failed try again after 2s
+    # Retry connect loop
     while True:
         try:
             client.connect(BROKER, PORT)
@@ -83,22 +48,22 @@ def main():
 
     print(f"[{DEVICE_ID}] Starting {SENSOR_TYPE} sensor (publishing to {topic})")
 
-    # Send data to broker
     try:
         while True:
             payload = {
-                "deviceId": DEVICE_ID,
+                "deviceId": sensor.device_id,
                 "signature": SIGNATURE,
-                "sensorType": SENSOR_TYPE,
+                "sensorType": sensor.sensor_type,
                 "timestamp": datetime.now().isoformat() + "Z",
-                "value": get_sensor_reading(),
-                "unit": config["unit"]
+                "value": sensor.get_value(),
+                "unit": unit
             }
 
             result = client.publish(topic, json.dumps(payload))
             status = result[0]
+
             if status == 0:
-                print(f"[{DEVICE_ID}] Sent {SENSOR_TYPE}={payload['value']}{config['unit']} to {topic}")
+                print(f"[{DEVICE_ID}] Sent {payload['value']}{unit} to {topic}")
             else:
                 print(f"[{DEVICE_ID}] Failed to send message to topic {topic}")
 
@@ -110,6 +75,7 @@ def main():
     finally:
         client.loop_stop()
         client.disconnect()
+
 
 if __name__ == "__main__":
     main()

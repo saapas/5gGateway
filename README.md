@@ -9,7 +9,7 @@
 
 ### Load test (1000 sensors) — in a separate terminal
 - pip install paho-mqtt
-- python devices/load_test_1000_sensors.py
+- run_load.py
 
 Contributors:
 Samuel Palovaara
