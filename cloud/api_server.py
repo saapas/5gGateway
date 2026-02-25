@@ -128,8 +128,12 @@ def export_data():
         raise TypeError(f"Type {type(obj)} not serializable")
 
     training_records = snapshot_training_records()
-    with open(HISTORICAL_PATH, "w") as f:
+    temp_path = HISTORICAL_PATH + ".tmp"
+    with open(temp_path, "w") as f:
         json.dump(training_records, f, default=json_serializer)
+    
+    if os.path.exists(temp_path):
+        os.replace(temp_path, HISTORICAL_PATH)
 
     return {"status": "exported"}
 

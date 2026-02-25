@@ -10,11 +10,11 @@ import subprocess
 
 CLOUD_API_URL = "http://localhost:8000"
 API_KEY = "secretAPIkey"
-POLL_INTERVAL = 30
-SCALE_UP_THRESHOLD = 1000   # avg msg rate per gateway
+POLL_INTERVAL = 15
+SCALE_UP_THRESHOLD = 1500
 SCALE_DOWN_THRESHOLD = 100
 MAX_GATEWAYS = 10
-COOLDOWN = 60
+COOLDOWN = 30
 
 last_scale_time = 0
 

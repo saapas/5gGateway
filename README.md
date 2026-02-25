@@ -7,9 +7,9 @@
 - pip install requests
 - python autoscaler.py
 
-### Load test (1000 sensors) — in a separate terminal
+### Load test (500 sensors) — in a separate terminal
 - pip install paho-mqtt
-- run_load.py
+- python run_load.py
 
 Contributors:
 Samuel Palovaara

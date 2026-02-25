@@ -7,9 +7,11 @@ from devices.sensor import Sensor, SENSOR_CONFIG
 
 BROKER = "localhost"
 PORT = 1883
-NUM_SENSORS = 100
+NUM_SENSORS = 500
 PUBLISH_INTERVAL = 1
 SIGNATURE = "device-secret"
+SENSORS_PER_BATCH = 100
+BATCH_INTERVAL = 60
 
 SENSOR_TYPES = ["temperature", "humidity", "pressure"]
 
@@ -19,7 +21,6 @@ def main():
 
     client = mqtt.Client(client_id="load-test", protocol=mqtt.MQTTv311)
 
-    # Retry connection
     while True:
         try:
             client.connect(BROKER, PORT)
@@ -32,21 +33,27 @@ def main():
     print("Connected!\n")
 
     sensors = []
-    for i in range(NUM_SENSORS):
-        sensor_type = SENSOR_TYPES[i % len(SENSOR_TYPES)]
-        device_id = f"sensor-{i+1:04d}"
-        sensors.append(Sensor(device_id, sensor_type))
-
-    print(f"Started load simulation with {NUM_SENSORS} sensors")
-    print(f"Publishing every {PUBLISH_INTERVAL}s\n")
+    total_sensors_created = 0
+    next_batch_time = time.time() + BATCH_INTERVAL
 
     total_sent = 0
     start_time = time.time()
 
     try:
         while True:
-            sent_this_cycle = 0
+            now = time.time()
+            if now >= next_batch_time and total_sensors_created < NUM_SENSORS:
+                batch_size = min(SENSORS_PER_BATCH, NUM_SENSORS - total_sensors_created)
+                for i in range(batch_size):
+                    sensor_index = total_sensors_created + 1
+                    sensor_type = SENSOR_TYPES[sensor_index % len(SENSOR_TYPES)]
+                    device_id = f"sensor-{sensor_index:04d}"
+                    sensors.append(Sensor(device_id, sensor_type))
+                    total_sensors_created += 1
+                print(f"Added {batch_size} new sensors, total: {total_sensors_created}")
+                next_batch_time = now + BATCH_INTERVAL
 
+            sent_this_cycle = 0
             for sensor in sensors:
                 topic = SENSOR_CONFIG[sensor.sensor_type]["topic"]
                 unit = SENSOR_CONFIG[sensor.sensor_type]["unit"]
@@ -69,7 +76,7 @@ def main():
             rate = total_sent / elapsed if elapsed > 0 else 0
 
             print(
-                f"Sent: {sent_this_cycle}/{NUM_SENSORS} | "
+                f"Sent: {sent_this_cycle}/{len(sensors)} | "
                 f"Total: {total_sent} | "
                 f"Rate: {rate:.0f} msg/s"
             )

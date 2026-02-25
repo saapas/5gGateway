@@ -72,22 +72,30 @@ try:
         now = time.time()
 
         if now - last_train_time >= TRAINING_INTERVAL_SECONDS:
-            if os.path.exists(DATA_PATH) and os.path.getsize(DATA_PATH) > 0:
-                log_info("Processing data for adaptive retraining")
-                df = spark.read.option("multiline", "true").json(DATA_PATH)
+            try:
+                if os.path.exists(DATA_PATH) and os.path.getsize(DATA_PATH) > 0:
+                    log_info("Processing data for adaptive retraining")
 
-                if not df.rdd.isEmpty():
-                    model = build_model(df)
-                    if model:
-                        artifact = persist_model(model)
-                        log_info(
-                            f"Published adaptive model @ {artifact['generated_at']} "
-                            f"with {len(model)} sensor profiles"
-                        )
+                    df = spark.read.option("multiline", "true").json(DATA_PATH)
+
+                    if not df.rdd.isEmpty():
+                        model = build_model(df)
+                        if model:
+                            artifact = persist_model(model)
+                            log_info(
+                                f"Published adaptive model @ {artifact['generated_at']} "
+                                f"with {len(model)} sensor profiles"
+                            )
+                        else:
+                            log_info("Not enough data to train model yet")
                     else:
-                        log_info("Not enough data to train model yet")
-            else:
-                log_info("Historical data file not ready for retraining")
+                        log_info("DataFrame empty — skipping")
+
+                else:
+                    log_info("Historical data file not ready for retraining")
+
+            except Exception as e:
+                log_error(f"Training attempt failed: {e}")
 
             last_train_time = now
 
