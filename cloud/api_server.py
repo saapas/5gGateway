@@ -1,7 +1,8 @@
 import json
 import os
 import time
-from collections import defaultdict, deque
+import threading
+from collections import defaultdict, deque, OrderedDict
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -12,44 +13,48 @@ from logger import log_info, log_error
 
 API_KEY = "secretAPIkey"
 PROTECTED_PATHS = ["/ingest"]
-gateway_configs = {"gateway-01": {"batch_size": 50, "max_wait_seconds": 5} }
-
-# Track gateway loads: gateway_id -> {status, message_rate, last_heartbeat}
-gateway_loads = {}
-
-app = FastAPI(title="IoT Cloud API")
 MODEL_PATH = "/data/anomaly_model.json"
 HISTORICAL_PATH = "/data/historical_data.json"
 TRAINING_WINDOW_SIZE = 50
 AUTO_EXPORT_INTERVAL_SECONDS = 20
 
+gateway_configs = {"gateway-01": {"batch_size": 50, "max_wait_seconds": 5} }
+gateway_loads = {}
+app = FastAPI(title="IoT Cloud API")
+database = []
+profile_buffers = defaultdict(lambda: deque(maxlen=TRAINING_WINDOW_SIZE))
+last_export_timestamp = 0
+
 class SensorData(BaseModel):
+    model_config = {"extra": "allow"}  # allow replication metadata fields
     deviceId: str
     sensorType: str
     timestamp: datetime
     value: float
     unit: str
     topic: Optional[str] = None
+    messageId: Optional[str] = None  # UUID for deduplication
 
 class IngestPayload(BaseModel):
     gatewayId: str
     data: List[SensorData]
 
-# database just list for now
-database = []
-profile_buffers = defaultdict(lambda: deque(maxlen=TRAINING_WINDOW_SIZE))
-last_export_timestamp = 0
+# Cloud-side deduplication: track ingested messageIds to handle
+# at-least-once delivery from replicated gateway cluster
+INGEST_DEDUP_MAX = 50000
+_ingested_ids = OrderedDict()
+_ingested_lock = threading.Lock()
 
 
 def make_profile_key(record):
-    """Build unique profile key for per-sensor-type model training."""
+    # Build unique profile key for per-sensor-type model lookup
     device_id = record.get("deviceId", "unknown-device")
     sensor_type = record.get("sensorType", "unknown-sensor")
     return f"{device_id}::{sensor_type}"
 
 
 def snapshot_training_records():
-    """Flatten bounded per-profile buffers into training dataset for Spark."""
+    # Get a snapshot of recent records for training, grouped by profile key
     records = []
     for buffer in profile_buffers.values():
         records.extend(buffer)
@@ -83,15 +88,31 @@ def ingest_data(
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # Add entries to database
+    # Add entries to database (with cloud-side deduplication)
+    accepted = 0
+    duplicates = 0
     for entry in payload.data:
         row = entry.model_dump()
+
+        # Deduplicate by messageId — handles at-least-once delivery
+        msg_id = row.get("messageId")
+        if msg_id:
+            with _ingested_lock:
+                if msg_id in _ingested_ids:
+                    duplicates += 1
+                    continue
+                _ingested_ids[msg_id] = True
+                while len(_ingested_ids) > INGEST_DEDUP_MAX:
+                    _ingested_ids.popitem(last=False)
+
         row["profileKey"] = make_profile_key(row)
         database.append(row)
         profile_buffers[row["profileKey"]].append(row)
+        accepted += 1
 
-    log_info(f"Received {len(payload.data)} records from {payload.gatewayId}")
-    log_info(f"  Sample: {payload.data[0].sensorType}")
+    log_info(f"Received {accepted} records from {payload.gatewayId} ({duplicates} duplicates skipped)")
+    if accepted > 0:
+        log_info(f"  Sample: {payload.data[0].sensorType}")
     log_info(f"Total stored records: {len(database)}")
 
     now = time.time()
@@ -101,7 +122,8 @@ def ingest_data(
 
     return {
         "status": "ok",
-        "received": len(payload.data)
+        "received": accepted,
+        "duplicates": duplicates
     }
 
 @app.post("/devices/register")

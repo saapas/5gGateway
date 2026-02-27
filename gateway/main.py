@@ -2,6 +2,7 @@ import time
 import threading
 import signal
 import sys
+import uuid
 import rest_client
 import mqtt_client
 import os
@@ -12,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from auth import validate_device, add_device
 from logger import log_info, log_error
 from anomaly_detector import AnomalyDetector
+from peer_sync import PeerSync
 
 # Example of how to add a device
 add_device("sensor-001", "device-secret")
@@ -39,6 +41,7 @@ buffer = DataBuffer(batch_size=50, max_wait_seconds=5)
 message_counter = {"count": 0, "lock": threading.Lock()}
 shutdown_event = threading.Event()
 detector = AnomalyDetector()
+peer_sync = PeerSync(GATEWAY_ID, buffer, API_KEY)
 
 worker_pool = ThreadPoolExecutor(
     max_workers=WORKER_THREAD_COUNT,
@@ -91,6 +94,9 @@ def model_refresh_loop():
 
 def process_message(message):
     try:
+        # Assign unique ID for deduplication and replication tracking
+        message["messageId"] = str(uuid.uuid4())
+
         deviceid = message.get("deviceId")
         signature = message.pop("signature", None)
 
@@ -122,6 +128,9 @@ def process_message(message):
                 log_info(f"[{GATEWAY_ID}] No profile for {profile_key} yet")
 
         buffer.add(message)
+
+        # Add to replication log so peers can pull this record
+        peer_sync.add_to_log(message)
 
     except Exception as e:
         log_error(f"[{GATEWAY_ID}] Error processing message: {e}")
@@ -157,6 +166,8 @@ def get_config():
             CONFIG.update(new_config)
             old_data = buffer.flush_all()
             buffer = DataBuffer(CONFIG["batch_size"], CONFIG["max_wait_seconds"])
+            # Update peer_sync to reference the new buffer
+            peer_sync.buffer = buffer
             if old_data:
                 buffer.requeue(old_data)
                 log_info(f"[{GATEWAY_ID}] Preserved {len(old_data)} messages during config update")
@@ -218,6 +229,10 @@ def main():
 
     model_thread = threading.Thread(target=model_refresh_loop, daemon=True)
     model_thread.start()
+
+    # Peer-to-peer replication (eventual consistency)
+    peer_sync.start(shutdown_event)
+    log_info(f"[{GATEWAY_ID}] Peer replication enabled")
 
     # Batch sender
     rest_thread = threading.Thread(target=batch_sender_loop, daemon=True)

@@ -1,9 +1,3 @@
-"""
-Simple Gateway Autoscaler
-
-Polls cloud API for gateway load, scales up/down by creating
-or killing Docker containers. 
-"""
 import time
 import requests
 import subprocess
@@ -22,7 +16,7 @@ last_scale_time = 0
 def get_gateway_status():
     # Fetch current gateway load status from cloud API
     try:
-        resp = requests.get(f"{CLOUD_API_URL}/gateway-status", timeout=5)
+        resp = requests.get(f"{CLOUD_API_URL}/gateway-status", timeout=15)
         if resp.status_code == 200:
             return resp.json()
     except Exception as e:
@@ -48,73 +42,73 @@ def get_running_gateways():
 
 def cleanup_stale(cloud_gateways, running):
     # Deregister gateways that exist in cloud API but have no running container
-    for gw_id in list(cloud_gateways):
-        if gw_id not in running and gw_id != "gateway-01":
-            print(f"[autoscaler] {gw_id} is stale (no container), removing from cloud")
-            deregister(gw_id)
+    for gateway_id in list(cloud_gateways):
+        if gateway_id not in running and gateway_id != "gateway-01":
+            print(f"[autoscaler] {gateway_id} is stale (no container), removing from cloud")
+            deregister(gateway_id)
 
 
 def start_gateway(num):
     # Start a new Docker container for the gateway with given number
-    gw_id = f"gateway-{num:02d}"
-    print(f"[autoscaler] Starting {gw_id}...")
+    gateway_id = f"gateway-{num:02d}"
+    print(f"[autoscaler] Starting {gateway_id}...")
 
     cmd = [
         "docker", "run", "-d",
-        "--name", gw_id,
+        "--name", gateway_id,
         "--network", "5ggateway_default",
-        "-e", f"GATEWAY_ID={gw_id}",
+        "-e", f"GATEWAY_ID={gateway_id}",
         "-e", "PYTHONUNBUFFERED=1",
         "5ggateway-gateway-01"
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
-        print(f"[autoscaler] {gw_id} started")
+        print(f"[autoscaler] {gateway_id} started")
         return True
 
-    print(f"[autoscaler] Failed to start {gw_id}: {result.stderr.strip()}")
+    print(f"[autoscaler] Failed to start {gateway_id}: {result.stderr.strip()}")
     return False
 
 
-def stop_gateway(gw_id):
+def stop_gateway(gateway_id):
     # Stop and remove the Docker container for this gateway
-    print(f"[autoscaler] Stopping {gw_id}...")
+    print(f"[autoscaler] Stopping {gateway_id}...")
     try:
-        r = subprocess.run(["docker", "stop", gw_id], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["docker", "stop", gateway_id], capture_output=True, text=True, timeout=30)
         if r.returncode == 0:
-            subprocess.run(["docker", "rm", gw_id], capture_output=True, text=True, timeout=10)
-            print(f"[autoscaler] {gw_id} removed")
+            subprocess.run(["docker", "rm", gateway_id], capture_output=True, text=True, timeout=10)
+            print(f"[autoscaler] {gateway_id} removed")
         elif "No such container" in r.stderr:
-            print(f"[autoscaler] {gw_id} already gone")
+            print(f"[autoscaler] {gateway_id} already gone")
         else:
             print(f"[autoscaler] stop failed: {r.stderr.strip()}")
     except Exception as e:
-        print(f"[autoscaler] Error stopping {gw_id}: {e}")
+        print(f"[autoscaler] Error stopping {gateway_id}: {e}")
 
-    deregister(gw_id)
+    deregister(gateway_id)
 
 
-def deregister(gw_id):
+def deregister(gateway_id):
     # Tell cloud API to remove this gateway from registry
     try:
         resp = requests.delete(
-            f"{CLOUD_API_URL}/gateway/{gw_id}",
+            f"{CLOUD_API_URL}/gateway/{gateway_id}",
             headers={"Authorization": f"Bearer {API_KEY}"},
             timeout=5
         )
         if resp.status_code == 200:
-            print(f"[autoscaler] {gw_id} deregistered")
+            print(f"[autoscaler] {gateway_id} deregistered")
         elif resp.status_code != 404:
-            print(f"[autoscaler] Deregister {gw_id}: {resp.text}")
+            print(f"[autoscaler] Deregister {gateway_id}: {resp.text}")
     except Exception as e:
-        print(f"[autoscaler] Deregister error for {gw_id}: {e}")
+        print(f"[autoscaler] Deregister error for {gateway_id}: {e}")
 
 
 def highest_gw_number(gateways):
     nums = []
-    for gw_id in gateways:
+    for gateway_id in gateways:
         try:
-            nums.append(int(gw_id.split("-")[1]))
+            nums.append(int(gateway_id.split("-")[1]))
         except (IndexError, ValueError):
             pass
     return max(nums) if nums else 1
@@ -134,18 +128,18 @@ def main():
             time.sleep(POLL_INTERVAL)
             continue
 
-        cloud_gws = status.get("gateways", {})
+        cloud_gateways = status.get("gateways", {})
 
         # clean up ghost entries
-        if running is not None and cloud_gws:
-            cleanup_stale(cloud_gws, running)
+        if running is not None and cloud_gateways:
+            cleanup_stale(cloud_gateways, running)
 
         # only consider gateways that are actually running
         if running is not None:
-            gateways = {gid: info for gid, info in cloud_gws.items()
+            gateways = {gid: info for gid, info in cloud_gateways.items()
                         if gid in running or gid == "gateway-01"}
         else:
-            gateways = cloud_gws
+            gateways = cloud_gateways
 
         count = len(gateways)
         if count == 0:

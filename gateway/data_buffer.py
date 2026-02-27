@@ -1,7 +1,10 @@
 import threading
 import time
+from collections import OrderedDict
 
-# Databuffer with lock
+# Databuffer with lock and deduplication
+
+DEDUP_CACHE_MAX = 10000  # max messageIds tracked for dedup
 
 class DataBuffer:
     def __init__(self, batch_size=10, max_wait_seconds=5):
@@ -11,10 +14,21 @@ class DataBuffer:
         self.buffer = []
         self.lock = threading.Lock()
         self.last_flush_time = time.time()
+        self._seen_ids = OrderedDict()  # messageId dedup cache (FIFO eviction)
 
     def add(self, data):
         with self.lock:
+            # Deduplicate by messageId if present
+            msg_id = data.get("messageId")
+            if msg_id:
+                if msg_id in self._seen_ids:
+                    return False  # duplicate, skip
+                self._seen_ids[msg_id] = True
+                # Evict oldest entries when cache is full
+                while len(self._seen_ids) > DEDUP_CACHE_MAX:
+                    self._seen_ids.popitem(last=False)
             self.buffer.append(data)
+            return True
 
     # Check if there is enough entries to send it to the database or if enough time has passed since last addition
     def get_batch_if_ready(self):
