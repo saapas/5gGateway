@@ -38,7 +38,7 @@ class Sensor:
 
         self.drift_after = random.uniform(30, 120)
 
-        self.drift_offset = random.uniform(-1.5 * span, 1.5 * span)
+        self.drift_offset = random.uniform(-4 * span, 4 * span)
 
     def get_value(self):
         elapsed = time.time() - self.start_time
