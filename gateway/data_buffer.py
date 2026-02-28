@@ -51,9 +51,3 @@ class DataBuffer:
     def requeue(self, batch):
         with self.lock:
             self.buffer = batch + self.buffer
-
-    def flush_all(self):
-        with self.lock:
-            data = self.buffer.copy()
-            self.buffer.clear()
-            return data

@@ -12,9 +12,8 @@ COOLDOWN = 30
 
 last_scale_time = 0
 
-
 def get_gateway_status():
-    # Fetch current gateway load status from cloud API
+    """Fetch current gateway load status from cloud API"""
     try:
         resp = requests.get(f"{CLOUD_API_URL}/gateway-status", timeout=15)
         if resp.status_code == 200:
@@ -25,7 +24,7 @@ def get_gateway_status():
 
 
 def get_running_gateways():
-    # Ask Docker for list of running gateway containers
+    """Fetch list of running gateway containers from Docker"""
     try:
         result = subprocess.run(
             ["docker", "ps", "--filter", "name=gateway-", "--format", "{{.Names}}"],
@@ -41,7 +40,7 @@ def get_running_gateways():
 
 
 def cleanup_stale(cloud_gateways, running):
-    # Deregister gateways that exist in cloud API but have no running container
+    """Deregister gateways that exist in cloud API but have no running container"""
     for gateway_id in list(cloud_gateways):
         if gateway_id not in running and gateway_id != "gateway-01":
             print(f"[autoscaler] {gateway_id} is stale (no container), removing from cloud")
@@ -49,7 +48,7 @@ def cleanup_stale(cloud_gateways, running):
 
 
 def start_gateway(num):
-    # Start a new Docker container for the gateway with given number
+    """Start a new Docker container for the gateway with given number"""
     gateway_id = f"gateway-{num:02d}"
     print(f"[autoscaler] Starting {gateway_id}...")
 
@@ -71,7 +70,7 @@ def start_gateway(num):
 
 
 def stop_gateway(gateway_id):
-    # Stop and remove the Docker container for this gateway
+    """Stop and remove the Docker container for this gateway"""
     print(f"[autoscaler] Stopping {gateway_id}...")
     try:
         r = subprocess.run(["docker", "stop", gateway_id], capture_output=True, text=True, timeout=30)
@@ -89,7 +88,7 @@ def stop_gateway(gateway_id):
 
 
 def deregister(gateway_id):
-    # Tell cloud API to remove this gateway from registry
+    """Tell cloud API to remove this gateway from registry"""
     try:
         resp = requests.delete(
             f"{CLOUD_API_URL}/gateway/{gateway_id}",
@@ -104,7 +103,8 @@ def deregister(gateway_id):
         print(f"[autoscaler] Deregister error for {gateway_id}: {e}")
 
 
-def highest_gw_number(gateways):
+def highest_gateway_number(gateways):
+    """Return the highest numeric suffix among the given gateway IDs."""
     nums = []
     for gateway_id in gateways:
         try:
@@ -164,7 +164,7 @@ def main():
             time.sleep(POLL_INTERVAL)
             continue
 
-        top = highest_gw_number(gateways)
+        top = highest_gateway_number(gateways)
 
         # scale up
         if avg_rate > SCALE_UP_THRESHOLD and count < MAX_GATEWAYS:

@@ -17,6 +17,7 @@ MODEL_PATH = "/data/anomaly_model.json"
 HISTORICAL_PATH = "/data/historical_data.json"
 TRAINING_WINDOW_SIZE = 50
 AUTO_EXPORT_INTERVAL_SECONDS = 20
+INGEST_DEDUP_MAX = 50000
 
 gateway_configs = {"gateway-01": {"batch_size": 50, "max_wait_seconds": 5} }
 gateway_loads = {}
@@ -24,6 +25,8 @@ app = FastAPI(title="IoT Cloud API")
 database = []
 profile_buffers = defaultdict(lambda: deque(maxlen=TRAINING_WINDOW_SIZE))
 last_export_timestamp = 0
+ingested_ids = OrderedDict()
+ingested_lock = threading.Lock()
 
 class SensorData(BaseModel):
     model_config = {"extra": "allow"}  # allow replication metadata fields
@@ -39,22 +42,15 @@ class IngestPayload(BaseModel):
     gatewayId: str
     data: List[SensorData]
 
-# Cloud-side deduplication: track ingested messageIds to handle
-# at-least-once delivery from replicated gateway cluster
-INGEST_DEDUP_MAX = 50000
-_ingested_ids = OrderedDict()
-_ingested_lock = threading.Lock()
-
-
 def make_profile_key(record):
-    # Build unique profile key for per-sensor-type model lookup
+    """Build unique profile key for per-sensor-type model lookup"""
     device_id = record.get("deviceId", "unknown-device")
     sensor_type = record.get("sensorType", "unknown-sensor")
     return f"{device_id}::{sensor_type}"
 
 
 def snapshot_training_records():
-    # Get a snapshot of recent records for training, grouped by profile key
+    """Get a snapshot of recent records for training, grouped by profile key"""
     records = []
     for buffer in profile_buffers.values():
         records.extend(buffer)
@@ -62,6 +58,7 @@ def snapshot_training_records():
 
 @app.middleware("http")
 async def gateway_auth_middleware(request: Request, call_next):
+    """Middleware to authenticate gateways on protected endpoints and auto-register new ones."""
     if any(request.url.path.startswith(p) for p in PROTECTED_PATHS):
         gateway_id = request.headers.get("gatewayid")
         gateway_secret = request.headers.get("secret")
@@ -78,10 +75,8 @@ async def gateway_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 @app.post("/ingest")
-def ingest_data(
-    payload: IngestPayload,
-    authorization: str = Header(None)
-):
+def ingest_data(payload: IngestPayload, authorization: str = Header(None)):
+    """ Ingest sensor data from gateways, with cloud-side deduplication and OTA config support """
     global last_export_timestamp
 
     # check for valid API key
@@ -97,13 +92,13 @@ def ingest_data(
         # Deduplicate by messageId — handles at-least-once delivery
         msg_id = row.get("messageId")
         if msg_id:
-            with _ingested_lock:
-                if msg_id in _ingested_ids:
+            with ingested_lock:
+                if msg_id in ingested_ids:
                     duplicates += 1
                     continue
-                _ingested_ids[msg_id] = True
-                while len(_ingested_ids) > INGEST_DEDUP_MAX:
-                    _ingested_ids.popitem(last=False)
+                ingested_ids[msg_id] = True
+                while len(ingested_ids) > INGEST_DEDUP_MAX:
+                    ingested_ids.popitem(last=False)
 
         row["profileKey"] = make_profile_key(row)
         database.append(row)
@@ -128,6 +123,7 @@ def ingest_data(
 
 @app.post("/devices/register")
 def create_device(gateway_id: str):
+    """Register a new device and return its credentials"""
     device_id, device_secret = register_device(gateway_id)
     log_info(f"Device registered: {device_id}")
     return {
@@ -137,6 +133,7 @@ def create_device(gateway_id: str):
 
 @app.get("/data")
 def get_all_data():
+    """Retrieve all ingested data"""
     return {
         "count": len(database),
         "data": database
@@ -161,6 +158,7 @@ def export_data():
 
 @app.get("/data/by-type/{sensor_type}")
 def get_data_by_type(sensor_type: str):
+    """Retrieve data for a specific sensor type"""
     filtered = [d for d in database if d.get("sensorType") == sensor_type]
     return {
         "sensorType": sensor_type,
@@ -170,6 +168,7 @@ def get_data_by_type(sensor_type: str):
 
 @app.get("/data/by-device/{device_id}")
 def get_data_by_device(device_id: str):
+    """Retrieve data for a specific device"""
     filtered = [d for d in database if d.get("deviceId") == device_id]
     return {
         "deviceId": device_id,
@@ -179,12 +178,14 @@ def get_data_by_device(device_id: str):
 
 @app.get("/config/{gateway_id}")
 def get_config(gateway_id: str, authorization: str = Header(None)):
+    """Retrieve configuration for a gateway"""
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(401, "Unauthorized")
     return {"config": gateway_configs.get(gateway_id, {})}
 
 @app.post("/config/{gateway_id}")
 def update_config(gateway_id: str, config_data: Dict[str, Any], authorization: str = Header(None)):
+    """Update configuration for a gateway"""
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
     
@@ -199,6 +200,7 @@ def update_config(gateway_id: str, config_data: Dict[str, Any], authorization: s
 
 @app.post("/heartbeat")
 def heartbeat(payload: dict, authorization: str = Header(None)):
+    """Receive heartbeat from gateways with load info for autoscaling decisions."""
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
     

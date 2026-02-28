@@ -25,6 +25,7 @@ def get_records_sent():
 # Sends data in correct format to the database, if fails waits before trying again and has max retries
 
 def send_to_cloud(batch):
+    """Send a batch of records to the cloud API with retries and error handling."""
     global _records_sent
     headers = {
         "Authorization": f"Bearer {API_KEY}",

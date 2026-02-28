@@ -6,6 +6,7 @@ gateways = {
 }
 
 def register_device(gateway_id: str):
+    """Register a new device under the specified gateway and return its credentials."""
     device_id = str(uuid.uuid4())
     device_secret = str(uuid.uuid4())
 
@@ -18,6 +19,7 @@ def register_device(gateway_id: str):
     return device_id, device_secret
 
 def validate_gateway(gateway_id, gateway_secret):
+    """Check if gateway credentials are valid."""
     if not gateway_id or not gateway_secret:
         return False
     return gateways.get(gateway_id) == gateway_secret

@@ -7,7 +7,7 @@ from devices.sensor import Sensor, SENSOR_CONFIG
 
 BROKER = "localhost"
 PORT = 1883
-NUM_SENSORS = 5000
+NUM_SENSORS = 500
 PUBLISH_INTERVAL = 1
 SIGNATURE = "device-secret"
 SENSORS_PER_BATCH = 100

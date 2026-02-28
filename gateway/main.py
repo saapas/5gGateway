@@ -18,7 +18,7 @@ from peer_sync import PeerSync
 # Example of how to add a device
 add_device("sensor-001", "device-secret")
 add_device("sensor-002", "device-secret")
-# not adding sensor 3 to demonstrate
+add_device("sensor-003", "device-secret")
 
 WORKER_THREAD_COUNT = 20  # Fixed number of worker threads
 API_KEY = "secretAPIkey"
@@ -41,7 +41,7 @@ buffer = DataBuffer(batch_size=50, max_wait_seconds=5)
 message_counter = {"count": 0, "lock": threading.Lock()}
 shutdown_event = threading.Event()
 detector = AnomalyDetector()
-peer_sync = PeerSync(GATEWAY_ID, buffer, API_KEY)
+peer_sync = PeerSync(GATEWAY_ID, buffer)
 
 worker_pool = ThreadPoolExecutor(
     max_workers=WORKER_THREAD_COUNT,
@@ -93,6 +93,7 @@ def model_refresh_loop():
         time.sleep(MODEL_REFRESH_INTERVAL_SECONDS)
 
 def process_message(message):
+    """Worker thread: process incoming MQTT message, apply ML, add to buffer and to the replication log."""
     try:
         # Assign unique ID for deduplication and replication tracking
         message["messageId"] = str(uuid.uuid4())
@@ -139,6 +140,7 @@ def mqtt_message_callback(message):
     worker_pool.submit(process_message, message)
 
 def batch_sender_loop():
+    """Background thread: check if batch is ready and send to cloud API."""
     while not shutdown_event.is_set():
         try:
             # Drain all ready batches
@@ -164,18 +166,14 @@ def get_config():
         if response.status_code == 200:
             new_config = response.json()["config"]
             CONFIG.update(new_config)
-            old_data = buffer.flush_all()
             buffer = DataBuffer(CONFIG["batch_size"], CONFIG["max_wait_seconds"])
             # Update peer_sync to reference the new buffer
             peer_sync.buffer = buffer
-            if old_data:
-                buffer.requeue(old_data)
-                log_info(f"[{GATEWAY_ID}] Preserved {len(old_data)} messages during config update")
     except Exception as e:
         log_error(f"[{GATEWAY_ID}] Configuration fetch failed: {e}")
 
 def heartbeat():
-    # Send heartbeat to cloud-api with current load metrics
+    """Send heartbeat to cloud-api with current load metrics"""
     try:
         msg_rate = get_and_reset_message_count()
         records_sent = rest_client.get_records_sent()
@@ -195,22 +193,15 @@ def heartbeat():
     except Exception as e:
         log_error(f"[{GATEWAY_ID}] Heartbeat failed: {e}")
 
-def graceful_shutdown(signum, frame):
-    # On shutdown signal, flush buffer and exit
-    log_info(f"[{GATEWAY_ID}] Shutdown signal received, flushing buffer...")
+def graceful_shutdown():
+    """Handle shutdown signals"""
+    log_info(f"[{GATEWAY_ID}] Shutdown signal received")
     shutdown_event.set()
-    
-    remaining = buffer.flush_all()
-    if remaining:
-        log_info(f"[{GATEWAY_ID}] Sending {len(remaining)} remaining messages to cloud...")
-        batch_size = CONFIG.get("batch_size", 50)
-        for i in range(0, len(remaining), batch_size):
-            rest_client.send_to_cloud(remaining[i:i + batch_size])
-    
     log_info(f"[{GATEWAY_ID}] Shutdown complete")
     sys.exit(0)
 
 def main():
+    """Main entry point: start MQTT listener, peer sync, model refresh and batch sender threads."""
     signal.signal(signal.SIGTERM, graceful_shutdown)
     signal.signal(signal.SIGINT, graceful_shutdown)
 
