@@ -148,7 +148,14 @@ def batch_sender_loop():
             while True:
                 batch = buffer.get_batch_if_ready()
                 if batch:
-                    worker_pool.submit(rest_client.send_to_cloud, batch)
+                    # Filter out peer-replicated records: only origin should send to cloud
+                    to_send = [m for m in batch if not m.get("_replicated_from")]
+                    replicated_count = len(batch) - len(to_send)
+                    if replicated_count:
+                        log_info(f"[{GATEWAY_ID}] Dropping {replicated_count} replicated records from cloud send")
+
+                    if to_send:
+                        worker_pool.submit(rest_client.send_to_cloud, to_send)
                     sent_any = True
                 else:
                     break

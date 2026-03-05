@@ -4,7 +4,7 @@ from collections import OrderedDict
 
 # Databuffer with lock and deduplication
 
-DEDUP_CACHE_MAX = 10000  # max messageIds tracked for dedup
+DEDUP_CACHE_MAX = 100000  # max messageIds tracked for dedup
 
 class DataBuffer:
     def __init__(self, batch_size=10, max_wait_seconds=5):

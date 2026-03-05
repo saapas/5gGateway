@@ -9,8 +9,9 @@ from logger import log_info, log_error
 
 PEER_PORT = 5000
 SYNC_INTERVAL = 10
-LOG_MAX = 5000
-SEEN_MAX = 20000
+
+LOG_MAX = 50000
+SEEN_MAX = 200000
 
 
 class PeerSync:

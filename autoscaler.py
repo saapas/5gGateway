@@ -31,9 +31,16 @@ def get_running_gateways():
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
-            names = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
+            names = []
+            for n in result.stdout.strip().split("\n"):
+                if n.strip():
+                    names.append(n.strip())
             # filter out compose-managed names like 5ggateway-gateway-01-1
-            return set(n for n in names if n.startswith("gateway-") and n.count("-") == 1)
+            filtered_names = set()
+            for n in names:
+                if n.startswith("gateway-") and n.count("-") == 1:
+                    filtered_names.add(n)
+            return filtered_names
     except Exception as e:
         print(f"[autoscaler] Docker check failed: {e}")
     return None
@@ -41,7 +48,8 @@ def get_running_gateways():
 
 def cleanup_stale(cloud_gateways, running):
     """Deregister gateways that exist in cloud API but have no running container"""
-    for gateway_id in list(cloud_gateways):
+    gateway_ids = list(cloud_gateways)
+    for gateway_id in gateway_ids:
         if gateway_id not in running and gateway_id != "gateway-01":
             print(f"[autoscaler] {gateway_id} is stale (no container), removing from cloud")
             deregister(gateway_id)
@@ -108,10 +116,16 @@ def highest_gateway_number(gateways):
     nums = []
     for gateway_id in gateways:
         try:
-            nums.append(int(gateway_id.split("-")[1]))
+            parts = gateway_id.split("-")
+            num = int(parts[1])
+            nums.append(num)
         except (IndexError, ValueError):
-            pass
-    return max(nums) if nums else 1
+            continue
+    max_num = 1
+    for n in nums:
+        if n > max_num:
+            max_num = n
+    return max_num
 
 
 def main():
@@ -147,7 +161,10 @@ def main():
             time.sleep(POLL_INTERVAL)
             continue
 
-        total_rate = sum(g.get("message_rate", 0) for g in gateways.values())
+        total_rate = 0
+        for g in gateways.values():
+            rate = g.get("message_rate", 0)
+            total_rate += rate
         avg_rate = total_rate / count
         total_sent = status.get("total_records_sent", 0)
         now = time.time()
@@ -157,8 +174,16 @@ def main():
         tag = " (cooldown)" if cooldown else ""
         print(f"\n[autoscaler] {count} gateways | rate={total_rate} avg={avg_rate:.0f} | "
               f"sent={total_sent}{tag}")
-        for gid, info in sorted(gateways.items()):
-            print(f"  {gid}: rate={info.get('message_rate',0)} sent={info.get('records_sent',0)}")
+        gateway_items = []
+        for item in gateways.items():
+            gateway_items.append(item)
+        sorted_gateways = sorted(gateway_items)
+        for gateway in sorted_gateways:
+            gid = gateway[0]
+            info = gateway[1]
+            rate = info.get('message_rate', 0)
+            sent = info.get('records_sent', 0)
+            print(f"  {gid}: rate={rate} sent={sent}")
 
         if cooldown:
             time.sleep(POLL_INTERVAL)
